@@ -6,12 +6,13 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional, Dict, Tuple, Set
 
 from database import create_document, get_documents
 from schemas import Review
 
 OURAIRPORTS_CSV_URL = "https://ourairports.com/data/airports.csv"
+OPENFLIGHTS_ROUTES_URL = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/routes.dat"
 
 app = FastAPI(title="Routes API")
 
@@ -25,6 +26,10 @@ app.add_middleware(
 
 # --- Airport data source (OurAirports) ---
 AIRPORTS: Dict[str, Dict] = {}
+ICAO_TO_IATA: Dict[str, str] = {}
+
+# --- Real routes map (OpenFlights) ---
+ROUTE_MAP: Dict[str, Set[str]] = {}
 
 
 def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[str, Dict]:
@@ -38,6 +43,7 @@ def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[s
         data = resp.content.decode("utf-8", errors="ignore")
         reader = csv.DictReader(io.StringIO(data))
         airports: Dict[str, Dict] = {}
+        icao_to_iata: Dict[str, str] = {}
         for row in reader:
             iata = (row.get("iata_code") or "").strip().upper()
             if not iata or len(iata) != 3 or iata == "\\N":
@@ -50,6 +56,7 @@ def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[s
             lon = row.get("longitude_deg")
             iso_country = (row.get("iso_country") or "").strip()
             municipality = (row.get("municipality") or "").strip()
+            icao = (row.get("ident") or "").strip().upper()
             try:
                 lat_f = float(lat)
                 lon_f = float(lon)
@@ -61,9 +68,15 @@ def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[s
                 "country": iso_country,
                 "lat": lat_f,
                 "lng": lon_f,
+                "icao": icao,
             }
+            if icao and len(icao) == 4:
+                icao_to_iata[icao] = iata
             if max_airports is not None and len(airports) >= max_airports:
                 break
+        # update global reverse map
+        global ICAO_TO_IATA
+        ICAO_TO_IATA = icao_to_iata
         return airports
     except Exception:
         return {}
@@ -71,14 +84,14 @@ def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[s
 
 # Fallback minimal curated set if OurAirports isn't reachable
 FALLBACK_AIRPORTS = {
-    "JFK": {"name": "John F. Kennedy International", "city": "New York", "country": "US", "lat": 40.6413, "lng": -73.7781},
-    "LHR": {"name": "London Heathrow", "city": "London", "country": "GB", "lat": 51.4700, "lng": -0.4543},
-    "CDG": {"name": "Paris Charles de Gaulle", "city": "Paris", "country": "FR", "lat": 49.0097, "lng": 2.5479},
-    "DXB": {"name": "Dubai International", "city": "Dubai", "country": "AE", "lat": 25.2532, "lng": 55.3657},
+    "JFK": {"name": "John F. Kennedy International", "city": "New York", "country": "US", "lat": 40.6413, "lng": -73.7781, "icao": "KJFK"},
+    "LHR": {"name": "London Heathrow", "city": "London", "country": "GB", "lat": 51.4700, "lng": -0.4543, "icao": "EGLL"},
+    "CDG": {"name": "Paris Charles de Gaulle", "city": "Paris", "country": "FR", "lat": 49.0097, "lng": 2.5479, "icao": "LFPG"},
+    "DXB": {"name": "Dubai International", "city": "Dubai", "country": "AE", "lat": 25.2532, "lng": 55.3657, "icao": "OMDB"},
 }
 
 # Simple static graph of direct routes (demo only)
-ROUTES = {
+STATIC_ROUTES = {
     "JFK": ["LHR", "CDG", "DXB"],
     "LHR": ["JFK", "CDG", "DXB"],
     "CDG": ["JFK", "LHR", "DXB"],
@@ -103,6 +116,66 @@ def ensure_airports_loaded():
         AIRPORTS = loaded
     else:
         AIRPORTS = FALLBACK_AIRPORTS
+
+
+def load_openflights_routes() -> Dict[str, Set[str]]:
+    """Download OpenFlights routes and build a map of nonstop IATA->IATA connections.
+    Uses ICAO->IATA reverse mapping from OurAirports when needed.
+    """
+    try:
+        resp = requests.get(OPENFLIGHTS_ROUTES_URL, timeout=25)
+        resp.raise_for_status()
+        text = resp.content.decode("utf-8", errors="ignore")
+        route_map: Dict[str, Set[str]] = {}
+        # routes.dat fields:
+        # airline,airline_id,src,src_id,dst,dst_id,codeshare,stops,equipment
+        for line in text.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 9:
+                continue
+            src = parts[2].strip().upper()
+            dst = parts[4].strip().upper()
+            # stops field: only include nonstops (0)
+            stops = parts[7].strip()
+            if stops not in ("0", "\\N", ""):
+                continue
+            # Map to IATA codes
+            def to_iata(code: str) -> Optional[str]:
+                if not code or code == "\\N":
+                    return None
+                if len(code) == 3:
+                    return code
+                if len(code) == 4:
+                    return ICAO_TO_IATA.get(code)
+                return None
+            s_iata = to_iata(src)
+            d_iata = to_iata(dst)
+            if not s_iata or not d_iata:
+                continue
+            # Only keep if both endpoints are airports we loaded
+            if s_iata not in AIRPORTS or d_iata not in AIRPORTS:
+                continue
+            if s_iata == d_iata:
+                continue
+            route_map.setdefault(s_iata, set()).add(d_iata)
+            route_map.setdefault(d_iata, set()).add(s_iata)
+        return route_map
+    except Exception:
+        return {}
+
+
+def ensure_routes_loaded():
+    global ROUTE_MAP
+    ensure_airports_loaded()
+    if ROUTE_MAP:
+        return
+    route_map = load_openflights_routes()
+    if not route_map:
+        # Initialize with static demo so core airports still show something
+        route_map = {k: set(v) for k, v in STATIC_ROUTES.items()}
+    ROUTE_MAP = route_map
 
 
 def haversine_km(a: Tuple[float, float], b: Tuple[float, float]) -> float:
@@ -147,16 +220,20 @@ def list_airports():
 
 
 @app.get("/routes/{iata}")
-def get_routes(iata: str):
+def get_routes(iata: str, limit: int = 30):
     ensure_airports_loaded()
+    ensure_routes_loaded()
     iata = iata.upper()
     if iata not in AIRPORTS:
         raise HTTPException(status_code=404, detail="Airport not found")
-    # Prefer static demo routes when present; otherwise compute nearest neighbors as a sensible default
-    route_codes = [c for c in ROUTES.get(iata, []) if c in AIRPORTS]
-    if not route_codes:
-        route_codes = nearest_connections(iata, k=8)
-    connections = [{"iata": c, **AIRPORTS[c]} for c in route_codes]
+    # Prefer real routes when available; otherwise compute nearest neighbors as a sensible default
+    connected = sorted(list(ROUTE_MAP.get(iata, set())))
+    if not connected:
+        connected = nearest_connections(iata, k=min(limit, 30))
+    # Apply limit
+    if limit and len(connected) > limit:
+        connected = connected[:limit]
+    connections = [{"iata": c, **AIRPORTS[c]} for c in connected if c in AIRPORTS]
     return {
         "airport": {"iata": iata, **AIRPORTS[iata]},
         "connections": connections,
