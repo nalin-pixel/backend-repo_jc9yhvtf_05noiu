@@ -1,11 +1,12 @@
 import os
 import csv
 import io
+import math
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 from database import create_document, get_documents
 from schemas import Review
@@ -26,9 +27,10 @@ app.add_middleware(
 AIRPORTS: Dict[str, Dict] = {}
 
 
-def load_airports_from_ourairports(max_airports: int = 1500) -> Dict[str, Dict]:
+def load_airports_from_ourairports(max_airports: Optional[int] = None) -> Dict[str, Dict]:
     """Download and parse airports from OurAirports CSV.
     Keep only large/medium airports with valid IATA and coordinates.
+    If max_airports is provided, cap the number; otherwise include all.
     """
     try:
         resp = requests.get(OURAIRPORTS_CSV_URL, timeout=20)
@@ -38,7 +40,7 @@ def load_airports_from_ourairports(max_airports: int = 1500) -> Dict[str, Dict]:
         airports: Dict[str, Dict] = {}
         for row in reader:
             iata = (row.get("iata_code") or "").strip().upper()
-            if not iata:
+            if not iata or len(iata) != 3 or iata == "\\N":
                 continue
             t = (row.get("type") or "").strip()
             if t not in {"large_airport", "medium_airport"}:
@@ -49,18 +51,18 @@ def load_airports_from_ourairports(max_airports: int = 1500) -> Dict[str, Dict]:
             iso_country = (row.get("iso_country") or "").strip()
             municipality = (row.get("municipality") or "").strip()
             try:
-                lat = float(lat)
-                lon = float(lon)
+                lat_f = float(lat)
+                lon_f = float(lon)
             except (TypeError, ValueError):
                 continue
             airports[iata] = {
                 "name": name,
                 "city": municipality or name,
                 "country": iso_country,
-                "lat": lat,
-                "lng": lon,
+                "lat": lat_f,
+                "lng": lon_f,
             }
-            if len(airports) >= max_airports:
+            if max_airports is not None and len(airports) >= max_airports:
                 break
         return airports
     except Exception:
@@ -95,11 +97,41 @@ def ensure_airports_loaded():
     global AIRPORTS
     if AIRPORTS:
         return
-    loaded = load_airports_from_ourairports()
+    # Load all available medium/large airports to ensure global coverage
+    loaded = load_airports_from_ourairports(max_airports=None)
     if loaded:
         AIRPORTS = loaded
     else:
         AIRPORTS = FALLBACK_AIRPORTS
+
+
+def haversine_km(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    R = 6371.0
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    h = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    return 2 * R * math.asin(math.sqrt(h))
+
+
+def nearest_connections(iata: str, k: int = 8, max_distance_km: Optional[float] = None) -> List[str]:
+    """Return up to k nearest airports by great-circle distance.
+    Optionally filter by a maximum distance.
+    """
+    if iata not in AIRPORTS:
+        return []
+    src = AIRPORTS[iata]
+    src_coord = (src["lat"], src["lng"])
+    distances: List[Tuple[float, str]] = []
+    for code, info in AIRPORTS.items():
+        if code == iata:
+            continue
+        d = haversine_km(src_coord, (info["lat"], info["lng"]))
+        if max_distance_km is None or d <= max_distance_km:
+            distances.append((d, code))
+    distances.sort(key=lambda x: x[0])
+    return [code for _, code in distances[:k]]
 
 
 @app.get("/")
@@ -110,7 +142,8 @@ def root():
 @app.get("/airports")
 def list_airports():
     ensure_airports_loaded()
-    return [{"iata": code, **data} for code, data in AIRPORTS.items()]
+    # Return a stable list sorted by IATA for consistency
+    return [{"iata": code, **AIRPORTS[code]} for code in sorted(AIRPORTS.keys())]
 
 
 @app.get("/routes/{iata}")
@@ -119,10 +152,14 @@ def get_routes(iata: str):
     iata = iata.upper()
     if iata not in AIRPORTS:
         raise HTTPException(status_code=404, detail="Airport not found")
-    connections = [c for c in ROUTES.get(iata, []) if c in AIRPORTS]
+    # Prefer static demo routes when present; otherwise compute nearest neighbors as a sensible default
+    route_codes = [c for c in ROUTES.get(iata, []) if c in AIRPORTS]
+    if not route_codes:
+        route_codes = nearest_connections(iata, k=8)
+    connections = [{"iata": c, **AIRPORTS[c]} for c in route_codes]
     return {
         "airport": {"iata": iata, **AIRPORTS[iata]},
-        "connections": [{"iata": c, **AIRPORTS[c]} for c in connections]
+        "connections": connections,
     }
 
 
@@ -141,8 +178,8 @@ def destination_summary(iata: str):
         "links": {
             "flights": search_flights,
             "hotels": search_hotels,
-            "wikipedia": wiki
-        }
+            "wikipedia": wiki,
+        },
     }
 
 
