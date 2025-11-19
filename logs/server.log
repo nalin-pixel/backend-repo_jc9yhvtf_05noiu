@@ -1,19 +1,22 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [152] using StatReload
-INFO:     Started server process [154]
+INFO:     Started reloader process [232] using StatReload
+INFO:     Started server process [234]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:56126 - "GET /airports HTTP/1.1" 200 OK
-INFO:     172.20.0.1:56126 - "GET /airports HTTP/1.1" 200 OK
-INFO:     172.20.0.1:56136 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:36004 - "GET /airports HTTP/1.1" 200 OK
-INFO:     172.20.0.1:36004 - "GET /airports HTTP/1.1" 200 OK
-INFO:     172.20.0.1:36008 - "GET /routes/JFK HTTP/1.1" 200 OK
-INFO:     172.20.0.1:36008 - "GET /routes/GRU HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45140 - "GET /routes/LHR HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45140 - "GET /routes/HND HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45140 - "GET /destination/SIN HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45140 - "GET /destination/SIN HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45140 - "GET /reviews/SIN HTTP/1.1" 200 OK
-INFO:     172.20.0.1:44694 - "GET /reviews/SIN HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36374 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:36384 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:36392 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:59234 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:59240 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:50302 - "GET /routes/TFN HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38326 - "GET /routes/TNG HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "OPTIONS / HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "OPTIONS / HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "GET / HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "OPTIONS /test HTTP/1.1" 200 OK
+INFO:     172.20.0.1:47254 - "GET / HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "GET /test HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38334 - "GET /test HTTP/1.1" 200 OK
+INFO:     172.20.0.1:47266 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:47272 - "GET /airports HTTP/1.1" 200 OK

@@ -1,11 +1,16 @@
 import os
+import csv
+import io
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 from database import create_document, get_documents
 from schemas import Review
+
+OURAIRPORTS_CSV_URL = "https://ourairports.com/data/airports.csv"
 
 app = FastAPI(title="Routes API")
 
@@ -17,35 +22,67 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Static data for airports and direct routes ---
-# Minimal curated set of major international airports and their direct connections (IATA codes)
-# In a real-world app you'd populate this from an aviation dataset.
-AIRPORTS = {
-    "JFK": {"name": "New York JFK", "city": "New York", "country": "USA", "lat": 40.6413, "lng": -73.7781},
-    "LHR": {"name": "London Heathrow", "city": "London", "country": "UK", "lat": 51.4700, "lng": -0.4543},
-    "CDG": {"name": "Paris Charles de Gaulle", "city": "Paris", "country": "France", "lat": 49.0097, "lng": 2.5479},
-    "DXB": {"name": "Dubai International", "city": "Dubai", "country": "UAE", "lat": 25.2532, "lng": 55.3657},
-    "HND": {"name": "Tokyo Haneda", "city": "Tokyo", "country": "Japan", "lat": 35.5494, "lng": 139.7798},
-    "SIN": {"name": "Singapore Changi", "city": "Singapore", "country": "Singapore", "lat": 1.3644, "lng": 103.9915},
-    "SYD": {"name": "Sydney", "city": "Sydney", "country": "Australia", "lat": -33.9399, "lng": 151.1753},
-    "FRA": {"name": "Frankfurt", "city": "Frankfurt", "country": "Germany", "lat": 50.0379, "lng": 8.5622},
-    "IST": {"name": "Istanbul", "city": "Istanbul", "country": "Turkey", "lat": 41.2753, "lng": 28.7519},
-    "GRU": {"name": "São Paulo Guarulhos", "city": "São Paulo", "country": "Brazil", "lat": -23.4356, "lng": -46.4731},
+# --- Airport data source (OurAirports) ---
+AIRPORTS: Dict[str, Dict] = {}
+
+
+def load_airports_from_ourairports(max_airports: int = 1500) -> Dict[str, Dict]:
+    """Download and parse airports from OurAirports CSV.
+    Keep only large/medium airports with valid IATA and coordinates.
+    """
+    try:
+        resp = requests.get(OURAIRPORTS_CSV_URL, timeout=20)
+        resp.raise_for_status()
+        data = resp.content.decode("utf-8", errors="ignore")
+        reader = csv.DictReader(io.StringIO(data))
+        airports: Dict[str, Dict] = {}
+        for row in reader:
+            iata = (row.get("iata_code") or "").strip().upper()
+            if not iata:
+                continue
+            t = (row.get("type") or "").strip()
+            if t not in {"large_airport", "medium_airport"}:
+                continue
+            name = (row.get("name") or "").strip()
+            lat = row.get("latitude_deg")
+            lon = row.get("longitude_deg")
+            iso_country = (row.get("iso_country") or "").strip()
+            municipality = (row.get("municipality") or "").strip()
+            try:
+                lat = float(lat)
+                lon = float(lon)
+            except (TypeError, ValueError):
+                continue
+            airports[iata] = {
+                "name": name,
+                "city": municipality or name,
+                "country": iso_country,
+                "lat": lat,
+                "lng": lon,
+            }
+            if len(airports) >= max_airports:
+                break
+        return airports
+    except Exception:
+        return {}
+
+
+# Fallback minimal curated set if OurAirports isn't reachable
+FALLBACK_AIRPORTS = {
+    "JFK": {"name": "John F. Kennedy International", "city": "New York", "country": "US", "lat": 40.6413, "lng": -73.7781},
+    "LHR": {"name": "London Heathrow", "city": "London", "country": "GB", "lat": 51.4700, "lng": -0.4543},
+    "CDG": {"name": "Paris Charles de Gaulle", "city": "Paris", "country": "FR", "lat": 49.0097, "lng": 2.5479},
+    "DXB": {"name": "Dubai International", "city": "Dubai", "country": "AE", "lat": 25.2532, "lng": 55.3657},
 }
 
-# Simple graph of direct routes
+# Simple static graph of direct routes (demo only)
 ROUTES = {
-    "JFK": ["LHR", "CDG", "DXB", "HND", "FRA"],
-    "LHR": ["JFK", "CDG", "DXB", "SIN", "IST"],
-    "CDG": ["JFK", "LHR", "DXB", "FRA"],
-    "DXB": ["JFK", "LHR", "CDG", "HND", "SIN", "SYD"],
-    "HND": ["JFK", "DXB", "SIN"],
-    "SIN": ["LHR", "DXB", "HND", "SYD"],
-    "SYD": ["DXB", "SIN"],
-    "FRA": ["JFK", "CDG", "IST"],
-    "IST": ["LHR", "FRA", "GRU"],
-    "GRU": ["IST"]
+    "JFK": ["LHR", "CDG", "DXB"],
+    "LHR": ["JFK", "CDG", "DXB"],
+    "CDG": ["JFK", "LHR", "DXB"],
+    "DXB": ["JFK", "LHR", "CDG"],
 }
+
 
 class ReviewIn(BaseModel):
     airport_iata: str
@@ -53,33 +90,50 @@ class ReviewIn(BaseModel):
     rating: int
     comment: Optional[str] = None
 
+
+def ensure_airports_loaded():
+    global AIRPORTS
+    if AIRPORTS:
+        return
+    loaded = load_airports_from_ourairports()
+    if loaded:
+        AIRPORTS = loaded
+    else:
+        AIRPORTS = FALLBACK_AIRPORTS
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "message": "Routes API running"}
 
+
 @app.get("/airports")
 def list_airports():
+    ensure_airports_loaded()
     return [{"iata": code, **data} for code, data in AIRPORTS.items()]
+
 
 @app.get("/routes/{iata}")
 def get_routes(iata: str):
+    ensure_airports_loaded()
     iata = iata.upper()
     if iata not in AIRPORTS:
         raise HTTPException(status_code=404, detail="Airport not found")
-    connections = ROUTES.get(iata, [])
+    connections = [c for c in ROUTES.get(iata, []) if c in AIRPORTS]
     return {
         "airport": {"iata": iata, **AIRPORTS[iata]},
-        "connections": [{"iata": c, **AIRPORTS[c]} for c in connections if c in AIRPORTS]
+        "connections": [{"iata": c, **AIRPORTS[c]} for c in connections]
     }
+
 
 @app.get("/destination/{iata}")
 def destination_summary(iata: str):
+    ensure_airports_loaded()
     iata = iata.upper()
     if iata not in AIRPORTS:
         raise HTTPException(status_code=404, detail="Airport not found")
     city = AIRPORTS[iata]["city"]
     wiki = f"https://en.wikipedia.org/wiki/{city.replace(' ', '_')}"
-    # provide external links placeholders
     search_flights = f"https://www.google.com/travel/flights?q=Flights%20to%20{iata}"
     search_hotels = f"https://www.google.com/travel/hotels/{city.replace(' ', '%20')}"
     return {
@@ -91,16 +145,17 @@ def destination_summary(iata: str):
         }
     }
 
+
 @app.post("/reviews", status_code=201)
 def add_review(review: ReviewIn):
     r = Review(**review.model_dump())
     inserted_id = create_document("review", r)
     return {"id": inserted_id}
 
+
 @app.get("/reviews/{iata}")
 def list_reviews(iata: str, limit: int = 50):
     items = get_documents("review", {"airport_iata": iata.upper()}, limit)
-    # Convert ObjectId and datetime to strings for JSON compatibility
     def serialize(doc):
         doc["_id"] = str(doc.get("_id"))
         if "created_at" in doc:
@@ -110,9 +165,9 @@ def list_reviews(iata: str, limit: int = 50):
         return doc
     return [serialize(d) for d in items]
 
+
 @app.get("/test")
 def test_database():
-    """Quick status for backend and DB"""
     response = {
         "backend": "✅ Running",
         "database": "❌ Not Available",
@@ -124,6 +179,7 @@ def test_database():
     except Exception:
         pass
     return response
+
 
 if __name__ == "__main__":
     import uvicorn
