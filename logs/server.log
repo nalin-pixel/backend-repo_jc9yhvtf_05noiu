@@ -1,13 +1,20 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [392] using StatReload
-INFO:     Started server process [394]
+INFO:     Started reloader process [437] using StatReload
+INFO:     Started server process [439]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:49932 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:49930 - "GET /destination/ABC HTTP/1.1" 200 OK
-INFO:     172.20.0.1:49930 - "GET /destination/ABC HTTP/1.1" 200 OK
-INFO:     172.20.0.1:49930 - "GET /reviews/ABC HTTP/1.1" 200 OK
-INFO:     172.20.0.1:49940 - "GET /reviews/ABC HTTP/1.1" 200 OK
-INFO:     172.20.0.1:50330 - "GET /airports HTTP/1.1" 200 OK
-INFO:     172.20.0.1:50346 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39532 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:39548 - "GET /destination/BRS HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39548 - "GET /destination/BRS HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39548 - "GET /reviews/BRS HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39548 - "GET /reviews/BRS HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39556 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:39568 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38456 - "GET /routes/TOJ?limit=9999 HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43752 - "GET /destination/MAD HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43752 - "GET /destination/MAD HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43752 - "GET /reviews/MAD HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43752 - "GET /reviews/MAD HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43758 - "GET /airports HTTP/1.1" 200 OK
+INFO:     172.20.0.1:43756 - "GET /airports HTTP/1.1" 200 OK
